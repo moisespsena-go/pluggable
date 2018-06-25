@@ -3,6 +3,6 @@ Modular Library for GoLang
 
 ## Installation
 
-```go
+```bash
 go get -u github.com/moisespsena/go-module
 ```
