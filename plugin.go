@@ -1,17 +1,24 @@
-package module
+package pluggable
 
 import (
 	"fmt"
-	"path"
 	"reflect"
 
-	"github.com/moisespsena/go-assetfs"
+	"github.com/go-errors/errors"
+	"github.com/moisespsena/go-edis"
 	"github.com/moisespsena/go-error-wrap"
 	"github.com/moisespsena/go-topsort"
 	"github.com/op/go-logging"
 	"github.com/qor/helpers"
-	"github.com/qor/qor"
 )
+
+const (
+	E_PLUGIN_TRIGGER  = "pluginTrigger"
+	E_PLUGIN_REGISTER = "register"
+	E_PLUGIN_INIT     = "init"
+)
+
+var eof = errors.New("!eof")
 
 type Plugin struct {
 	uid            string
@@ -39,21 +46,16 @@ func (p *Plugin) String() string {
 
 type Plugins struct {
 	GlobalOptions
-	AssetFS                   assetfs.Interface
-	Items                     []*Plugin
-	ByPath                    map[string]*Plugin
-	Extensions                []Extension
-	initialized               bool
-	AfterPluginsInitCallbacks []func() error
-	AfterPluginInitCallbacks  []func(plugin *Plugin) error
-	OnPluginRegisterCallbacks []func(plugin *Plugin) error
-	OnPluginSetupCallbacks    []func(plugin *Plugin) error
-	OnPluginInitCallbacks     []func(plugin *Plugin) error
-	Log                       *logging.Logger
+	PluginEventDispatcher
+	ByPath      map[string]*Plugin
+	Extensions  []Extension
+	initialized bool
+	Log         *logging.Logger
+	plugins []*Plugin
 }
 
-func NewPlugins(assetFS assetfs.Interface) *Plugins {
-	return &Plugins{AssetFS: assetFS}
+func NewPlugins() *Plugins {
+	return &Plugins{}
 }
 
 func (pls *Plugins) Extension(extensions ...Extension) (err error) {
@@ -61,68 +63,31 @@ func (pls *Plugins) Extension(extensions ...Extension) (err error) {
 	if pls.initialized {
 		for _, extension := range extensions {
 			extension.Init(pls)
-			err = pls.EachCallback(extension.OnPluginRegister)
-			if err != nil {
-				return errwrap.Wrap(err, "Extensio %v", extension)
+			if ed, ok := extension.(edis.EventDispatcherInterface); ok {
+				err = pls.Each(func(plugin *Plugin) (err error) {
+					return ed.Trigger(edis.NewEvent("pluginRegister", plugin))
+				})
+				if err != nil {
+					return errwrap.Wrap(err, "Extension %v", extension)
+				}
 			}
 		}
 	}
 	return
 }
 
-func (pls *Plugins) AfterPluginsInitCallback(callbacks ...func() error) {
-	pls.AfterPluginsInitCallbacks = append(pls.AfterPluginsInitCallbacks, callbacks...)
-}
-
-func (pls *Plugins) AfterPluginInitCallback(callbacks ...func(plugin *Plugin) error) {
-	pls.AfterPluginInitCallbacks = append(pls.AfterPluginInitCallbacks, callbacks...)
-}
-
-func (pls *Plugins) OnPluginRegisterCallback(callbacks ...func(plugin *Plugin) error) (err error) {
-	pls.OnPluginRegisterCallbacks = append(pls.OnPluginRegisterCallbacks, callbacks...)
-	return errwrap.Wrap(pls.EachCallback(callbacks...), "RegisterCallback")
-}
-
-func (pls *Plugins) OnPluginInitCallback(callbacks ...func(plugin *Plugin) error) (err error) {
-	pls.OnPluginInitCallbacks = append(pls.OnPluginInitCallbacks, callbacks...)
-	if pls.initialized {
-		return errwrap.Wrap(pls.EachCallback(callbacks...), "InitCallback")
-	}
-	return
-}
-
-func (pls *Plugins) OnPluginSetupCallback(callbacks ...func(plugin *Plugin) error) (err error) {
-	pls.OnPluginSetupCallbacks = append(pls.OnPluginSetupCallbacks, callbacks...)
-	if pls.initialized {
-		return errwrap.Wrap(pls.EachCallback(callbacks...), "SetupCallback")
-	}
-	return nil
-}
-
-func (pls *Plugins) EachCallback(callbacks ...func(plugin *Plugin) error) (err error) {
-	err = pls.Each(func(plugin *Plugin) (err error) {
-		for _, cb := range callbacks {
-			err = cb(plugin)
-			if err != nil {
-				return errwrap.Wrap(err, "Callback %s", cb)
-			}
-			if err != nil {
-				return
-			}
+func (pls *Plugins) TriggerPlugins(e edis.EventInterface, plugins ...*Plugin) (err error) {
+	if len(plugins) == 0 {
+		if len(pls.plugins) > 0 {
+			return pls.PluginEventDispatcher.TriggerPlugins(e, pls.plugins...)
 		}
-		return
-	})
-	return
+		return nil
+	}
+	return pls.PluginEventDispatcher.TriggerPlugins(e, plugins...)
 }
 
 func (pls *Plugins) Each(cb func(plugin *Plugin) (err error)) (err error) {
-	for _, plugin := range pls.Items {
-		err = cb(plugin)
-		if err != nil {
-			return errwrap.Wrap(err, "Plugin %s", plugin)
-		}
-	}
-	return
+	return pls.EachPlugins(pls.plugins, cb)
 }
 
 func (pls *Plugins) Add(plugin ...interface{}) (err error) {
@@ -134,44 +99,14 @@ func (pls *Plugins) Add(plugin ...interface{}) (err error) {
 		rvalue := reflect.Indirect(reflect.ValueOf(pi))
 		pth := rvalue.Type().PkgPath()
 		var absPath string
-		if absPath = helpers.ResolveGoSrcPath(pth); absPath != "" {
-			pls.AssetFS.RegisterPath(path.Join(absPath, "assets"))
-		}
-		p := &Plugin{"", len(pls.Items), pth, absPath, pi, rvalue}
-		pls.Items = append(pls.Items, p)
+		absPath = helpers.ResolveGoSrcPath(pth)
+		p := &Plugin{"", len(pls.plugins), pth, absPath, pi, rvalue}
+		pls.plugins = append(pls.plugins, p)
 		pls.ByPath[pth] = p
 
-		if onRegister, ok := pi.(PluginRegister); ok {
-			onRegister.OnRegister(pls, p)
-		}
-
-		for _, extension := range pls.Extensions {
-			err = extension.OnPluginRegister(p)
-			if err != nil {
-				return
-			}
-		}
-
-		for _, cb := range pls.OnPluginRegisterCallbacks {
-			err = cb(p)
-			if err != nil {
-				return err
-			}
-		}
+		err = pls.TriggerPlugins(edis.NewEvent(E_PLUGIN_REGISTER), p)
 	}
 	return nil
-}
-
-func (pls *Plugins) Setup() (err error) {
-	return pls.Each(func(p *Plugin) (err error) {
-		if setup, ok := p.Value.(Setup); ok {
-			err = setup.Setup()
-			if err != nil {
-				return errwrap.Wrap(err, "Setup")
-			}
-		}
-		return
-	})
 }
 
 func (pls *Plugins) doPlugin(p *Plugin, f func(p *Plugin) (err error)) (err error) {
@@ -187,7 +122,7 @@ func (pls *Plugins) sort() (err error) {
 	provideMap := map[string]string{}
 	byUID := map[string]*Plugin{}
 
-	for _, p := range pls.Items {
+	for _, p := range pls.plugins {
 		uid := p.UID()
 		graph.AddNode(uid)
 		byUID[uid] = p
@@ -204,7 +139,7 @@ func (pls *Plugins) sort() (err error) {
 
 	globalOptions := pls.GlobalOptions.GlobalOptions
 
-	for _, p := range pls.Items {
+	for _, p := range pls.plugins {
 		if requires, ok := p.Value.(PluginRequireOptions); ok {
 			err = pls.doPlugin(p, func(p *Plugin) error {
 				uid := p.UID()
@@ -235,7 +170,7 @@ func (pls *Plugins) sort() (err error) {
 		plugins[i] = byUID[uid]
 	}
 
-	pls.Items = plugins
+	pls.plugins = plugins
 
 	return nil
 }
@@ -261,10 +196,19 @@ func (pls *Plugins) Init() (err error) {
 
 	globalOptions := pls.GlobalOptions.GlobalOptions
 
-	pls.Each(func(p *Plugin) (err error) {
+	err = pls.Trigger(edis.NewEvent("init"))
+	if err != nil {
+		return
+	}
+
+	err = pls.Each(func(p *Plugin) (err error) {
 		log.Debug("Init plugin", p.String())
 		if gOptions, ok := p.Value.(GlobalOptionsInterface); ok {
 			gOptions.SetGlobalOptions(globalOptions)
+		}
+		err = pls.TriggerPlugins(edis.NewEvent("init"), p)
+		if err != nil {
+			return err
 		}
 		if pl, ok := p.Value.(PluginInit); ok {
 			err = pl.Init()
@@ -282,36 +226,14 @@ func (pls *Plugins) Init() (err error) {
 				return errwrap.Wrap(err, "Init")
 			}
 		}
-		for _, extension := range pls.Extensions {
-			err = extension.OnPluginInit(p)
-			if err != nil {
-				return errwrap.Wrap(err, "Extension %T > OnPluginInit %s", extension, p)
-			}
-		}
-		for _, cb := range pls.OnPluginInitCallbacks {
-			err = cb(p)
-			if err != nil {
-				return errwrap.Wrap(err, "PluginInitCallback %T > Call %s", cb, p)
-			}
-		}
+		err = pls.TriggerPlugins(edis.NewEvent("initDone"), p)
 		return
 	})
 
-	for _, cb := range pls.AfterPluginsInitCallbacks {
-		err = cb()
-		if err != nil {
-			return errwrap.Wrap(err, "After Plugins Init Callback %s", cb)
-		}
+	if err != nil {
+		return
 	}
 
-	for _, p := range pls.Items {
-		for _, cb := range pls.AfterPluginInitCallbacks {
-			err = cb(p)
-			if err != nil {
-				return errwrap.Wrap(err, "After Plugin Init Callback %s > Plugin %s", cb, p)
-			}
-		}
-	}
-
+	err = pls.Trigger(edis.NewEvent("initDone"))
 	return errwrap.Wrap(err, "Plugins > Init")
 }

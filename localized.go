@@ -1,4 +1,4 @@
-package module
+package pluggable
 
 import (
 	"path"
@@ -8,22 +8,21 @@ import (
 )
 
 type I18nPlugins struct {
-	*Plugins
+	PluginsFS
 	LocaleFS api.Interface
 }
 
-func NewI18nPlugins(assetFS api.Interface) *I18nPlugins {
-	pls := &I18nPlugins{NewPlugins(assetFS), assetFS.NameSpace("locale")}
-	pls.OnPluginRegisterCallback(pls.onPluginRegister)
-	return pls
-}
-
-func (pls *I18nPlugins) onPluginRegister(plugin *Plugin) error {
-	if plugin.AbsPath != "" {
-		pth := path.Join(plugin.AbsPath, "assets", "locale")
-		if path_helpers.IsExistingDir(pth) {
-			pls.LocaleFS.NameSpace(plugin.Path).RegisterPath(pth)
+func NewI18nPlugins(fs api.Interface) *I18nPlugins {
+	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace("locale")}
+	pls.OnPlugin("register", func(e PluginEventInterface) error {
+		plugin := e.Plugin()
+		if plugin.AbsPath != "" {
+			pth := path.Join(plugin.AbsPath, "assets", "locale")
+			if path_helpers.IsExistingDir(pth) {
+				pls.LocaleFS.NameSpace(plugin.Path).RegisterPath(pth)
+			}
 		}
-	}
-	return nil
+		return nil
+	})
+	return pls
 }

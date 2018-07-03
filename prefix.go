@@ -1,4 +1,4 @@
-package module
+package pluggable
 
 import (
 	"github.com/moisespsena/go-default-logger"
