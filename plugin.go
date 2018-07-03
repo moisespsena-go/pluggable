@@ -104,6 +104,10 @@ func (pls *Plugins) Add(plugin ...interface{}) (err error) {
 		pls.plugins = append(pls.plugins, p)
 		pls.ByPath[pth] = p
 
+		if r, ok := pi.(PluginRegister); ok {
+			r.OnRegister(pls)
+		}
+
 		err = pls.TriggerPlugins(edis.NewEvent(E_PLUGIN_REGISTER), p)
 	}
 	return nil

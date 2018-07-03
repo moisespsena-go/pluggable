@@ -5,6 +5,10 @@ import (
 	"github.com/qor/qor"
 )
 
+type PluginRegister interface {
+	OnRegister(dis PluginEventDispatcherInterface)
+}
+
 type PluginInit interface {
 	Init() error
 }
@@ -15,10 +19,6 @@ type PluginInitOptions interface {
 
 type PluginInitPlugins interface {
 	Init(plugins *Plugins) error
-}
-
-type PluginRegister interface {
-	OnRegister(plugins *Plugins, plugin *Plugin)
 }
 
 type PluginInitSite interface {

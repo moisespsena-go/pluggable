@@ -1,10 +1,14 @@
 package pluggable
 
 import (
+	"fmt"
+
 	"github.com/moisespsena/go-edis"
 	"github.com/moisespsena/go-error-wrap"
-	"fmt"
 )
+
+type EventDispatcher = edis.EventDispatcher
+type Event = edis.Event
 
 type PluginEventInterface interface {
 	edis.EventInterface
@@ -30,15 +34,22 @@ type PluginEventCallbackInterface interface {
 	Call(pe PluginEventInterface) error
 }
 
-type PluginCallbackFunc func(pe PluginEventInterface) error
+type PluginCallbackFuncE func(pe PluginEventInterface) error
+
+func (p PluginCallbackFuncE) Call(pe PluginEventInterface) error {
+	return p(pe)
+}
+
+type PluginCallbackFunc func(pe PluginEventInterface)
 
 func (p PluginCallbackFunc) Call(pe PluginEventInterface) error {
-	return p(pe)
+	p(pe)
+	return nil
 }
 
 type PluginEventDispatcherInterface interface {
 	edis.EventDispatcherInterface
-	OnPlugin(eventName string, callbacks... interface{}) error
+	OnPlugin(eventName string, callbacks ...interface{}) error
 	TriggerPlugins(e edis.EventInterface, plugins ...*Plugin) (err error)
 	EachPlugins(items []*Plugin, cb func(plugin *Plugin) (err error)) (err error)
 	EachPluginsCallback(items []*Plugin, callbacks ...func(plugin *Plugin) error) (err error)
@@ -54,9 +65,9 @@ func (c PluginEventCallback) Call(e PluginEventInterface) error {
 	return c(e)
 }
 
-func (ped PluginEventDispatcher) OnPlugin(eventName string, callbacks... interface{}) error {
-	cbLocal := func(cbi PluginEventCallbackInterface) edis.CallbackFunc {
-		return edis.CallbackFunc(func(e edis.EventInterface) error {
+func (ped PluginEventDispatcher) OnPlugin(eventName string, callbacks ...interface{}) error {
+	cbLocal := func(cbi PluginEventCallbackInterface) edis.CallbackFuncE {
+		return edis.CallbackFuncE(func(e edis.EventInterface) error {
 			return cbi.Call(e.(PluginEventInterface))
 		})
 	}
@@ -66,11 +77,13 @@ func (ped PluginEventDispatcher) OnPlugin(eventName string, callbacks... interfa
 		case PluginEventCallbackInterface:
 			cbi = t
 		case func(e PluginEventInterface) error:
-			cbi = PluginEventCallback(t)
+			cbi = PluginCallbackFuncE(t)
+		case func(e PluginEventInterface):
+			cbi = PluginCallbackFunc(t)
 		default:
 			return fmt.Errorf("Invalid Callback type %s", t)
 		}
-		ped.On("plugin:" + eventName, cbLocal(cbi))
+		ped.On("plugin:"+eventName, cbLocal(cbi))
 	}
 	return nil
 }
