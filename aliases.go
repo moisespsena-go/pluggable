@@ -1,6 +1,6 @@
 package pluggable
 
-import edis "github.com/moisespsena/go-edis"
+import "github.com/moisespsena/go-edis"
 
 type EventDispatcherInterface = edis.EventDispatcherInterface
 type EventInterface = edis.EventInterface

@@ -8,9 +8,9 @@ import (
 	"github.com/moisespsena/go-default-logger"
 	"github.com/moisespsena/go-edis"
 	"github.com/moisespsena/go-error-wrap"
+	"github.com/moisespsena/go-path-helpers"
 	"github.com/moisespsena/go-topsort"
 	"github.com/op/go-logging"
-	"github.com/qor/helpers"
 )
 
 const (
@@ -127,7 +127,7 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 	for _, pi = range plugin {
 		rvalue = reflect.Indirect(reflect.ValueOf(pi))
 		pth = rvalue.Type().PkgPath()
-		absPath = helpers.ResolveGoSrcPath(pth)
+		absPath = path_helpers.ResolveGoSrcPath(pth)
 		p = &Plugin{"", len(pls.plugins), pth, absPath, pi, rvalue, "", ""}
 		uid = p.UID()
 		if _, ok = pls.ByUID[uid]; ok {

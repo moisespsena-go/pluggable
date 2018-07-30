@@ -2,8 +2,8 @@ package pluggable
 
 import (
 	"github.com/moisespsena/go-default-logger"
+	"github.com/moisespsena/go-path-helpers"
 	"github.com/op/go-logging"
-	"github.com/qor/helpers"
 )
 
 var PREFIX string
@@ -11,6 +11,6 @@ var PREFIX string
 var log *logging.Logger
 
 func init() {
-	PREFIX = helpers.GetCalledDir()
+	PREFIX = path_helpers.GetCalledDir()
 	log = defaultlogger.NewLogger(PREFIX)
 }
