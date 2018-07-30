@@ -43,16 +43,7 @@ type PluginEventDispatcherInterface interface {
 
 type PluginEventDispatcher struct {
 	EventDispatcher
-	options   *Options
-	dispacher PluginEventDispatcherInterface
-}
-
-func (ped *PluginEventDispatcher) SetDispatcher(dispatcher PluginEventDispatcherInterface) {
-	ped.dispacher = dispatcher
-}
-
-func (ped *PluginEventDispatcher) Dispatcher() PluginEventDispatcherInterface {
-	return ped.dispacher
+	options *Options
 }
 
 func (ped *PluginEventDispatcher) SetOptions(options *Options) {
@@ -69,9 +60,9 @@ func (ped *PluginEventDispatcher) OnPlugin(eventName string, callbacks ...interf
 	}
 }
 
-func (ped *PluginEventDispatcher) OnPluginE(eventName string, callbacks ...interface{}) error {
-	cbLocal := func(cbi PluginEventCallbackInterface) CallbackFuncE {
-		return CallbackFuncE(func(e EventInterface) error {
+func (ped *PluginEventDispatcher) OnPluginE(eventName string, callbacks ...interface{}) (err error) {
+	cbLocal := func(cbi PluginEventCallbackInterface) edis.CallbackFuncE {
+		return edis.CallbackFuncE(func(e EventInterface) error {
 			return cbi.Call(e.(PluginEventInterface))
 		})
 	}
@@ -87,16 +78,19 @@ func (ped *PluginEventDispatcher) OnPluginE(eventName string, callbacks ...inter
 		default:
 			return fmt.Errorf("Invalid Callback type %s", t)
 		}
-		ped.On("plugin:"+eventName, cbLocal(cbi))
+		err = ped.EventDispatcher.OnE("plugin:"+eventName, cbLocal(cbi))
+		if err != nil {
+			return
+		}
 	}
 	return nil
 }
 
+func (ped *PluginEventDispatcher) PluginDispatcher() PluginEventDispatcherInterface {
+	return ped.Dispatcher().(PluginEventDispatcherInterface)
+}
+
 func (ped *PluginEventDispatcher) TriggerPlugins(e EventInterface, plugins ...*Plugin) (err error) {
-	dispatcher := ped.dispacher
-	if dispatcher == nil {
-		dispatcher = ped
-	}
 	var (
 		pe PluginEventInterface
 		ok bool
@@ -105,20 +99,22 @@ func (ped *PluginEventDispatcher) TriggerPlugins(e EventInterface, plugins ...*P
 		pe = &PluginEvent{EventInterface: e}
 	}
 
-	pe.SetDispatcher(dispatcher)
-	pe.SetPluginDispatcher(dispatcher)
-	pe.SetOptions(dispatcher.Options())
+	dis := ped.PluginDispatcher()
 
-	eLocal := &PluginEvent{&Event{PName: "plugin:" + e.Name(), PParent: pe}, dispatcher, nil, dispatcher.Options()}
+	if pe.PluginDispatcher() == nil {
+		defer pe.WithPluginDispatcher(dis)()
+	}
+
+	eLocal := &PluginEvent{&Event{PName: "plugin:" + e.Name()}, nil, dis.Options(), dis}
 	err = ped.EachPluginsCallback(plugins, func(plugin *Plugin) (err error) {
+		eLocal.plugin = plugin
+		if err = ped.Trigger(eLocal); err == nil {
+			if eLocal.Error() != nil {
+				return eLocal.Error()
+			}
+		}
 		if ed, ok := plugin.Value.(EventDispatcherInterface); ok {
 			pe.SetPlugin(plugin)
-			eLocal.plugin = plugin
-			if err = ped.Trigger(eLocal); err == nil {
-				if eLocal.Error() != nil {
-					return eLocal.Error()
-				}
-			}
 			if err != nil {
 				return
 			}

@@ -16,6 +16,10 @@ type PluginRegisterDisArg interface {
 	OnRegister(dis PluginEventDispatcherInterface)
 }
 
+type PluginRegisterOptionsArg interface {
+	OnRegister(options *Options)
+}
+
 type PluginInit interface {
 	Init()
 }
@@ -52,8 +56,16 @@ type PluginBefore interface {
 	Before() []string
 }
 
+type PluginBeforeI interface {
+	Before() []interface{}
+}
+
 type PluginAfter interface {
 	After() []string
+}
+
+type PluginAfterI interface {
+	After() []interface{}
 }
 
 type NamedPlugin interface {
@@ -68,4 +80,12 @@ type LoggedInterface interface {
 type GlobalOptionsInterface interface {
 	SetGlobalOptions(options *Options)
 	GetGlobalOptions() *Options
+}
+
+type PluginFSNameSpace interface {
+	NameSpace() string
+}
+
+type PluginAssetsRootPath interface {
+	AssetsRootPath() string
 }

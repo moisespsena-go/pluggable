@@ -5,18 +5,18 @@ import "github.com/moisespsena/go-edis"
 type PluginEventInterface interface {
 	EventInterface
 	PluginDispatcher() PluginEventDispatcherInterface
-	SetPluginDispatcher(dis PluginEventDispatcherInterface)
 	Plugin() *Plugin
 	SetPlugin(*Plugin)
 	Options() *Options
 	SetOptions(*Options)
+	WithPluginDispatcher(dis PluginEventDispatcherInterface) func()
 }
 
 type PluginEvent struct {
 	EventInterface
-	pluginDispatcher PluginEventDispatcherInterface
-	plugin           *Plugin
-	options          *Options
+	plugin     *Plugin
+	options    *Options
+	dispatcher PluginEventDispatcherInterface
 }
 
 type Parent struct {
@@ -31,22 +31,14 @@ func NewPluginEvent(e interface{}, data ...interface{}) (pe *PluginEvent) {
 		pe = &PluginEvent{EventInterface: e.(EventInterface)}
 	}
 	for _, d := range data {
-		switch dt := d.(type) {
-		case Parent:
-			pe.SetParent(dt.Value)
-		default:
-			pe.SetData(d)
-		}
+		pe.SetData(d)
+		break
 	}
 	return
 }
 
-func (pe *PluginEvent) SetPluginDispatcher(dis PluginEventDispatcherInterface) {
-	pe.pluginDispatcher = dis
-}
-
 func (pe *PluginEvent) PluginDispatcher() PluginEventDispatcherInterface {
-	return pe.pluginDispatcher
+	return pe.dispatcher
 }
 
 func (pe *PluginEvent) Plugin() *Plugin {
@@ -58,9 +50,20 @@ func (pe *PluginEvent) SetPlugin(p *Plugin) {
 }
 
 func (pe *PluginEvent) Options() *Options {
+	if pe.options == nil {
+		return pe.dispatcher.Options()
+	}
 	return pe.options
 }
 
 func (pe *PluginEvent) SetOptions(o *Options) {
 	pe.options = o
+}
+
+func (pe *PluginEvent) WithPluginDispatcher(dis PluginEventDispatcherInterface) func() {
+	old := pe.dispatcher
+	pe.dispatcher = dis
+	return func() {
+		pe.dispatcher = old
+	}
 }
