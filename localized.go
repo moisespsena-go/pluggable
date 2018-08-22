@@ -20,6 +20,10 @@ func (pls *I18nPlugins) LocaleFS() api.Interface {
 	return pls.localeFS
 }
 
+type OnLocaleFS interface {
+	OnLocaleFS(fs api.Interface)
+}
+
 func NewI18nPlugins(fs api.Interface) *I18nPlugins {
 	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace("locale")}
 	pls.SetDispatcher(pls)
@@ -31,6 +35,11 @@ func NewI18nPlugins(fs api.Interface) *I18nPlugins {
 				pls.Dispatcher().(I18nPluginsInterface).LocaleFS().NameSpace(plugin.NameSpace).RegisterPath(pth)
 			}
 		}
+
+		if p, ok := plugin.Value.(OnLocaleFS); ok {
+			p.OnLocaleFS(pls.Dispatcher().(I18nPluginsInterface).LocaleFS())
+		}
+
 		return nil
 	})
 	return pls
