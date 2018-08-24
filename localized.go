@@ -4,8 +4,11 @@ import (
 	"path"
 
 	"github.com/moisespsena/go-assetfs/api"
+	"github.com/moisespsena/go-error-wrap"
 	"github.com/moisespsena/go-path-helpers"
 )
+
+var E_LOCALE_FS = PREFIX + ".localeFS"
 
 type I18nPluginsInterface interface {
 	LocaleFS() api.Interface
@@ -20,27 +23,46 @@ func (pls *I18nPlugins) LocaleFS() api.Interface {
 	return pls.localeFS
 }
 
-type OnLocaleFS interface {
-	OnLocaleFS(fs api.Interface)
-}
-
 func NewI18nPlugins(fs api.Interface) *I18nPlugins {
 	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace("locale")}
 	pls.SetDispatcher(pls)
 	pls.OnPlugin("register", func(e PluginEventInterface) error {
-		plugin := e.Plugin()
-		if plugin.AbsPath != "" {
-			pth := path.Join(plugin.AssetsRoot, "locale")
+		p := e.Plugin()
+		fs := pls.Dispatcher().(I18nPluginsInterface).LocaleFS()
+		if p.AbsPath != "" {
+			pth := path.Join(p.AssetsRoot, "locale")
 			if path_helpers.IsExistingDir(pth) {
-				pls.Dispatcher().(I18nPluginsInterface).LocaleFS().NameSpace(plugin.NameSpace).RegisterPath(pth)
+				fs.NameSpace(p.NameSpace).RegisterPath(pth)
 			}
 		}
 
-		if p, ok := plugin.Value.(OnLocaleFS); ok {
-			p.OnLocaleFS(pls.Dispatcher().(I18nPluginsInterface).LocaleFS())
+		if dis, ok := p.Value.(EventDispatcherInterface); ok {
+			e := &LocaleFSEvent{NewPluginEvent(E_LOCALE_FS), fs}
+			e.SetPlugin(p)
+			if err := dis.Trigger(e); err != nil {
+				return errwrap.Wrap(err, "Trigger ", E_LOCALE_FS)
+			}
 		}
-
 		return nil
 	})
 	return pls
+}
+
+type LocaleFSEvent struct {
+	PluginEventInterface
+	LocaleFS api.Interface
+}
+
+func (e *LocaleFSEvent) RegisterWithNameSpace(nameSpace, basePath string) error {
+	pth := path.Join(basePath, "locale")
+	if path_helpers.IsExistingDir(pth) {
+		return e.LocaleFS.NameSpace(nameSpace).RegisterPath(pth)
+	}
+	return nil
+}
+
+func OnLocaleFS(p EventDispatcherInterface, cb func(e *LocaleFSEvent)) {
+	p.On(E_LOCALE_FS, func(e PluginEventInterface) {
+		cb(e.(*LocaleFSEvent))
+	})
 }
