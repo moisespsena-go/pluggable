@@ -10,7 +10,7 @@ import (
 	"github.com/moisespsena/go-path-helpers"
 )
 
-const E_ASSET_FS = "pluggable.AssetFS"
+var E_ASSET_FS = PREFIX + ".AssetFS"
 
 type PluginFSInterface interface {
 	EventDispatcherInterface
