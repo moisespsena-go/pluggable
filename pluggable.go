@@ -125,8 +125,7 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 	}
 
 	for _, pi = range plugin {
-		rvalue = reflect.Indirect(reflect.ValueOf(pi))
-		pth = rvalue.Type().PkgPath()
+		pth = path_helpers.PkgPathOf(pi)
 		absPath = path_helpers.ResolveGoSrcPath(pth)
 		p = &Plugin{"", len(pls.plugins), pth, absPath, pi, rvalue, "", ""}
 		uid = p.UID()

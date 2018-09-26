@@ -2,6 +2,7 @@ package pluggable
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/moisespsena/go-edis"
 	"github.com/moisespsena/go-error-wrap"
@@ -141,7 +142,8 @@ func (ped *PluginEventDispatcher) EachPluginsCallback(items []*Plugin, callbacks
 		for _, cb := range callbacks {
 			err = cb(plugin)
 			if err != nil {
-				return errwrap.Wrap(err, "Callback %s", cb)
+				typ := reflect.TypeOf(cb)
+				return errwrap.Wrap(err, "Callback %s [%T]", typ.Name(), cb)
 			}
 			if err != nil {
 				return

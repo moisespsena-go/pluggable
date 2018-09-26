@@ -11,6 +11,7 @@ import (
 var E_LOCALE_FS = PREFIX + ".localeFS"
 
 type I18nPluginsInterface interface {
+	PluginFSInterface
 	LocaleFS() api.Interface
 }
 
@@ -23,9 +24,7 @@ func (pls *I18nPlugins) LocaleFS() api.Interface {
 	return pls.localeFS
 }
 
-func NewI18nPlugins(fs api.Interface) *I18nPlugins {
-	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace("locale")}
-	pls.SetDispatcher(pls)
+func InitPluginI18nFS(pls I18nPluginsInterface) {
 	pls.OnPlugin("register", func(e PluginEventInterface) error {
 		p := e.Plugin()
 		fs := pls.Dispatcher().(I18nPluginsInterface).LocaleFS()
@@ -37,7 +36,7 @@ func NewI18nPlugins(fs api.Interface) *I18nPlugins {
 		}
 
 		if dis, ok := p.Value.(EventDispatcherInterface); ok {
-			e := &LocaleFSEvent{NewPluginEvent(E_LOCALE_FS), fs}
+			e := &LocaleFSEvent{NewPluginEvent(E_LOCALE_FS), fs.NameSpace(p.NameSpace)}
 			e.SetPlugin(p)
 			if err := dis.Trigger(e); err != nil {
 				return errwrap.Wrap(err, "Trigger ", E_LOCALE_FS)
@@ -45,6 +44,12 @@ func NewI18nPlugins(fs api.Interface) *I18nPlugins {
 		}
 		return nil
 	})
+}
+
+func NewI18nPlugins(fs api.Interface) *I18nPlugins {
+	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace("locale")}
+	pls.SetDispatcher(pls)
+	InitPluginI18nFS(pls)
 	return pls
 }
 

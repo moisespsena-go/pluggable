@@ -3,24 +3,28 @@ package pluggable
 import (
 	"path"
 
+	"github.com/moisespsena/go-error-wrap"
+
 	"reflect"
 
 	"github.com/moisespsena/go-assetfs/api"
-	"github.com/moisespsena/go-error-wrap"
 	"github.com/moisespsena/go-path-helpers"
 )
 
 var E_ASSET_FS = PREFIX + ".AssetFS"
 
 type PluginFSInterface interface {
-	EventDispatcherInterface
+	PluginEventDispatcherInterface
 	SetAssetFSPathRegister(regiser func(fs api.Interface, pth string) error)
 	AssetFSPathRegister() func(fs api.Interface, pth string) error
+	FS() api.Interface
+	PrivateFS() api.Interface
+	PluginPrivateFS(pluginID string) api.Interface
 }
 
 type PluginsFS struct {
 	*Plugins
-	AssetFS          api.Interface
+	fs               api.Interface
 	pathRegisterFunc func(fs api.Interface, pth string) error
 }
 
@@ -32,13 +36,26 @@ func (p *PluginsFS) AssetFSPathRegister() func(fs api.Interface, pth string) err
 	return p.pathRegisterFunc
 }
 
-func NewPluginsFS(fs api.Interface) *PluginsFS {
-	pls := &PluginsFS{Plugins: NewPlugins(), AssetFS: fs}
-	pls.SetDispatcher(pls)
-	pls.pathRegisterFunc = DefaultFSPathRegister
-	pls.OnPlugin("register", func(e PluginEventInterface) error {
+func (p *PluginsFS) FS() api.Interface {
+	return p.fs
+}
+
+func (p *PluginsFS) PrivateFS() api.Interface {
+	return p.fs.NameSpace("@private")
+}
+
+func (p *PluginsFS) PluginPrivateFS(pluginUID string) api.Interface {
+	fs := p.PrivateFS()
+	fs = fs.NameSpace(p.ByUID[pluginUID].Path)
+	return fs
+}
+
+func InitPluginFS(pls PluginFSInterface) {
+	pls.OnPlugin("register", func(e PluginEventInterface) (err error) {
 		register := pls.Dispatcher().(PluginFSInterface).AssetFSPathRegister()
 		p := e.Plugin()
+		pfs := pls.PluginPrivateFS(p.UID())
+
 		if p.AbsPath != "" {
 			if assetsPath, ok := p.Value.(PluginAssetsRootPath); ok {
 				p.AssetsRoot = assetsPath.AssetsRootPath()
@@ -50,18 +67,33 @@ func NewPluginsFS(fs api.Interface) *PluginsFS {
 			if ns, ok := p.Value.(PluginFSNameSpace); ok {
 				p.NameSpace = ns.NameSpace()
 			}
-			register(pls.AssetFS, path.Join(p.AssetsRoot, "assets"))
+			register(pls.FS(), path.Join(p.AssetsRoot, "assets"))
+			register(pfs, path.Join(p.AssetsRoot, "private"))
 		}
 
 		if dis, ok := p.Value.(EventDispatcherInterface); ok {
-			e := &AssetFSEvent{NewPluginEvent(E_ASSET_FS), fs, register}
+			e := &AssetFSEvent{NewPluginEvent(E_ASSET_FS), pls.FS(), register}
 			e.SetPlugin(p)
 			if err := dis.Trigger(e); err != nil {
-				return errwrap.Wrap(err, "Trigger ", E_ASSET_FS)
+				err = errwrap.Wrap(err, "Trigger ", E_ASSET_FS)
 			}
 		}
+
+		if err == nil {
+			if setter, ok := p.Value.(FSSetter); ok {
+				setter.SetFS(pfs)
+			}
+		}
+
 		return nil
 	})
+}
+
+func NewPluginsFS(fs api.Interface) *PluginsFS {
+	pls := &PluginsFS{Plugins: NewPlugins(), fs: fs}
+	pls.SetDispatcher(pls)
+	pls.pathRegisterFunc = DefaultFSPathRegister
+	InitPluginFS(pls)
 	return pls
 }
 
@@ -93,4 +125,8 @@ func OnAssetFS(p EventDispatcherInterface, cb func(e *AssetFSEvent)) {
 	p.On(E_ASSET_FS, func(e PluginEventInterface) {
 		cb(e.(*AssetFSEvent))
 	})
+}
+
+type FSSetter interface {
+	SetFS(fs api.Interface)
 }
