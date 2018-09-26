@@ -68,7 +68,7 @@ func InitPluginFS(pls PluginFSInterface) {
 				p.NameSpace = ns.NameSpace()
 			}
 			register(pls.FS(), path.Join(p.AssetsRoot, "assets"))
-			register(pfs, path.Join(p.AssetsRoot, "private"))
+			register(pfs, path.Join(p.AssetsRoot, "data"))
 		}
 
 		if dis, ok := p.Value.(EventDispatcherInterface); ok {
