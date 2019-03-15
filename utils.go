@@ -1,7 +1,6 @@
 package pluggable
 
 import (
-	"fmt"
 	"reflect"
 
 	"github.com/moisespsena/go-path-helpers"
@@ -9,9 +8,11 @@ import (
 
 func UID(v interface{}) string {
 	t := reflect.ValueOf(v).Type().Elem()
-	id := fmt.Sprintf("%v.%v", path_helpers.PkgPathOf(t), t.Name())
+	id := path_helpers.PkgPathOf(t)
 	if named, ok := v.(NamedPlugin); ok {
 		id += "#" + named.Name()
+	} else if t.Name() != "Plugin" {
+		id += "." + t.Name()
 	}
 	return id
 }

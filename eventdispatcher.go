@@ -79,7 +79,7 @@ func (ped *PluginEventDispatcher) OnPluginE(eventName string, callbacks ...inter
 		default:
 			return fmt.Errorf("Invalid Callback type %s", t)
 		}
-		err = ped.EventDispatcher.OnE("plugin:"+eventName, cbLocal(cbi))
+		err = ped.OnE("plugin:"+eventName, cbLocal(cbi))
 		if err != nil {
 			return
 		}

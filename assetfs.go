@@ -7,44 +7,44 @@ import (
 
 	"reflect"
 
-	"github.com/moisespsena/go-assetfs/api"
+	"github.com/moisespsena/go-assetfs/assetfsapi"
 	"github.com/moisespsena/go-path-helpers"
 )
 
-var E_ASSET_FS = PREFIX + ".AssetFS"
+var E_FS = PKG + ".FS"
 
 type PluginFSInterface interface {
 	PluginEventDispatcherInterface
-	SetAssetFSPathRegister(regiser func(fs api.Interface, pth string) error)
-	AssetFSPathRegister() func(fs api.Interface, pth string) error
-	FS() api.Interface
-	PrivateFS() api.Interface
-	PluginPrivateFS(pluginID string) api.Interface
+	SetAssetFSPathRegister(regiser func(fs assetfsapi.PathRegistrator, pth string) error)
+	AssetFSPathRegister() func(fs assetfsapi.PathRegistrator, pth string) error
+	FS() assetfsapi.Interface
+	PrivateFS() assetfsapi.Interface
+	PluginPrivateFS(pluginID string) assetfsapi.Interface
 }
 
 type PluginsFS struct {
 	*Plugins
-	fs               api.Interface
-	pathRegisterFunc func(fs api.Interface, pth string) error
+	fs               assetfsapi.Interface
+	pathRegisterFunc func(fs assetfsapi.PathRegistrator, pth string) error
 }
 
-func (p *PluginsFS) SetAssetFSPathRegister(register func(fs api.Interface, pth string) error) {
+func (p *PluginsFS) SetAssetFSPathRegister(register func(fs assetfsapi.PathRegistrator, pth string) error) {
 	p.pathRegisterFunc = register
 }
 
-func (p *PluginsFS) AssetFSPathRegister() func(fs api.Interface, pth string) error {
+func (p *PluginsFS) AssetFSPathRegister() func(fs assetfsapi.PathRegistrator, pth string) error {
 	return p.pathRegisterFunc
 }
 
-func (p *PluginsFS) FS() api.Interface {
+func (p *PluginsFS) FS() assetfsapi.Interface {
 	return p.fs
 }
 
-func (p *PluginsFS) PrivateFS() api.Interface {
+func (p *PluginsFS) PrivateFS() assetfsapi.Interface {
 	return p.fs.NameSpace("@private")
 }
 
-func (p *PluginsFS) PluginPrivateFS(pluginUID string) api.Interface {
+func (p *PluginsFS) PluginPrivateFS(pluginUID string) assetfsapi.Interface {
 	fs := p.PrivateFS()
 	fs = fs.NameSpace(p.ByUID[pluginUID].Path)
 	return fs
@@ -67,15 +67,19 @@ func InitPluginFS(pls PluginFSInterface) {
 			if ns, ok := p.Value.(PluginFSNameSpace); ok {
 				p.NameSpace = ns.NameSpace()
 			}
-			register(pls.FS(), path.Join(p.AssetsRoot, "assets"))
-			register(pfs, path.Join(p.AssetsRoot, "data"))
+			if registrator, ok := pls.FS().(assetfsapi.PathRegistrator); ok {
+				register(registrator, path.Join(p.AssetsRoot, "assets"))
+			}
+			if registrator, ok := pfs.(assetfsapi.PathRegistrator); ok {
+				register(registrator, path.Join(p.AssetsRoot, "data"))
+			}
 		}
 
 		if dis, ok := p.Value.(EventDispatcherInterface); ok {
-			e := &AssetFSEvent{NewPluginEvent(E_ASSET_FS), pls.FS(), register}
+			e := &FSEvent{NewPluginEvent(E_FS), pls.FS(), register, pfs}
 			e.SetPlugin(p)
 			if err := dis.Trigger(e); err != nil {
-				err = errwrap.Wrap(err, "Trigger ", E_ASSET_FS)
+				err = errwrap.Wrap(err, "Trigger ", E_FS)
 			}
 		}
 
@@ -89,7 +93,7 @@ func InitPluginFS(pls PluginFSInterface) {
 	})
 }
 
-func NewPluginsFS(fs api.Interface) *PluginsFS {
+func NewPluginsFS(fs assetfsapi.Interface) *PluginsFS {
 	pls := &PluginsFS{Plugins: NewPlugins(), fs: fs}
 	pls.SetDispatcher(pls)
 	pls.pathRegisterFunc = DefaultFSPathRegister
@@ -97,17 +101,26 @@ func NewPluginsFS(fs api.Interface) *PluginsFS {
 	return pls
 }
 
-func DefaultFSPathRegister(fs api.Interface, pth string) error {
+func DefaultFSPathRegister(fs assetfsapi.PathRegistrator, pth string) error {
 	return fs.RegisterPath(pth)
 }
 
-type AssetFSEvent struct {
-	PluginEventInterface
-	AssetFS  api.Interface
-	Register func(fs api.Interface, pth string) error
+type PluginPrivateFSSetter interface {
+	SetPrivateFS(fs assetfsapi.Interface)
 }
 
-func (AssetFSEvent) PathOf(value interface{}) (pth string) {
+type PluginAssetFSSetter interface {
+	SetPrivateFS(fs assetfsapi.Interface)
+}
+
+type FSEvent struct {
+	PluginEventInterface
+	AssetFS       assetfsapi.Interface
+	AssetRegister func(fs assetfsapi.PathRegistrator, pth string) error
+	PrivateFS     assetfsapi.Interface
+}
+
+func (FSEvent) PathOf(value interface{}) (pth string) {
 	t := reflect.TypeOf(value)
 	for t.Kind() != reflect.Struct {
 		t = t.Elem()
@@ -117,16 +130,18 @@ func (AssetFSEvent) PathOf(value interface{}) (pth string) {
 	return
 }
 
-func (a *AssetFSEvent) RegisterAssets(basePath string) {
-	a.Register(a.AssetFS, path.Join(basePath, "assets"))
+func (a *FSEvent) RegisterAssetPath(basePath string) {
+	if r, ok := a.AssetFS.(assetfsapi.PathRegistrator); ok {
+		a.AssetRegister(r, path.Join(basePath, "assets"))
+	}
 }
 
-func OnAssetFS(p EventDispatcherInterface, cb func(e *AssetFSEvent)) {
-	p.On(E_ASSET_FS, func(e PluginEventInterface) {
-		cb(e.(*AssetFSEvent))
+func OnFS(p EventDispatcherInterface, cb func(e *FSEvent)) {
+	p.On(E_FS, func(e PluginEventInterface) {
+		cb(e.(*FSEvent))
 	})
 }
 
 type FSSetter interface {
-	SetFS(fs api.Interface)
+	SetFS(fs assetfsapi.Interface)
 }

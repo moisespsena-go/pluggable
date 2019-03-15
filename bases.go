@@ -25,3 +25,15 @@ func (l *Logged) SetLog(log *logging.Logger) {
 func (l *Logged) Log() *logging.Logger {
 	return l.log
 }
+
+type Accessible struct {
+	plugin *Plugin
+}
+
+func (a *Accessible) Plugin() *Plugin {
+	return a.plugin
+}
+
+func (a *Accessible) SetPlugin(plugin *Plugin) {
+	a.plugin = plugin
+}

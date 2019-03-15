@@ -3,6 +3,7 @@ package pluggable
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/go-errors/errors"
 	"github.com/moisespsena/go-default-logger"
@@ -31,6 +32,8 @@ type Plugin struct {
 	Value                 interface{}
 	ReflectedValue        reflect.Value
 	AssetsRoot, NameSpace string
+	logger                *logging.Logger
+	mu                    sync.Mutex
 }
 
 func (p *Plugin) UID() string {
@@ -44,6 +47,21 @@ func (p *Plugin) String() string {
 	return p.UID()
 }
 
+func (p *Plugin) Logger() *logging.Logger {
+	if p.logger == nil {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.logger == nil {
+			p.logger = logging.MustGetLogger(p.UID())
+		}
+	}
+	return p.logger
+}
+
+func (p *Plugin) SetLoggerLevel(level logging.Level) {
+	logging.SetLevel(level, p.UID())
+}
+
 type Plugins struct {
 	Logged
 	PluginEventDispatcher
@@ -55,6 +73,8 @@ type Plugins struct {
 	prioritaryPlugins []*Plugin
 	sorted            bool
 	optionsProvider   map[string]*Plugin
+	befores           map[string][]string
+	afters            map[string][]string
 }
 
 func NewPlugins() *Plugins {
@@ -98,6 +118,7 @@ func (pls *Plugins) Each(cb func(plugin *Plugin) (err error)) (err error) {
 	}
 	return pls.EachPlugins(pls.plugins, cb)
 }
+
 func (pls *Plugins) Add(plugin ...interface{}) (err error) {
 	return pls.AddTo(&pls.plugins, plugin...)
 }
@@ -125,33 +146,68 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 	}
 
 	for _, pi = range plugin {
+		if piDis, ok := pi.(EventDispatcherInterface); ok {
+			if piDis.Dispatcher() == nil {
+				piDis.SetDispatcher(piDis)
+			}
+		}
+
 		pth = path_helpers.PkgPathOf(pi)
 		absPath = path_helpers.ResolveGoSrcPath(pth)
-		p = &Plugin{"", len(pls.plugins), pth, absPath, pi, rvalue, "", ""}
+
+		p = &Plugin{
+			Index:          len(pls.plugins),
+			Path:           pth,
+			AbsPath:        absPath,
+			Value:          pi,
+			ReflectedValue: rvalue,
+		}
+
 		uid = p.UID()
 		if _, ok = pls.ByUID[uid]; ok {
 			log.Warningf("%q Duplicated. Ignored.", uid)
 			continue
 		}
-		*to = append(*to, p)
-		pls.ByUID[p.UID()] = p
 
-		switch r := pi.(type) {
-		case PluginRegister:
-			r.OnRegister()
-		case PluginRegisterArg:
-			r.OnRegister(p)
-		case PluginRegisterDisArg:
-			r.OnRegister(pls.PluginDispatcher())
-		case PluginRegisterOptionsArg:
-			r.OnRegister(pls.options)
+		if pi, ok := pi.(PluginAccess); ok {
+			pi.SetPlugin(p)
 		}
 
-		err = pls.TriggerPlugins(edis.NewEvent(E_REGISTER), p)
+		err = func() (err error) {
+			defer func() {
+				if err != nil {
+					err = errwrap.Wrap(err, "Plugin %q", p.UID())
+				}
+			}()
+			*to = append(*to, p)
+			pls.ByUID[p.UID()] = p
 
-		if pls.initialized {
-			pls.initPlugin(p)
-		}
+			if setter, ok := pi.(PluginSetter); ok {
+				setter.SetPlugin(p)
+			}
+
+			if setter, ok := pi.(LoggerSetter); ok {
+				setter.SetLogger(p.Logger())
+			}
+
+			switch r := pi.(type) {
+			case PluginRegister:
+				r.OnRegister()
+			case PluginRegisterArg:
+				r.OnRegister(p)
+			case PluginRegisterDisArg:
+				r.OnRegister(pls.PluginDispatcher())
+			case PluginRegisterOptionsArg:
+				r.OnRegister(pls.options)
+			}
+
+			err = pls.TriggerPlugins(edis.NewEvent(E_REGISTER), p)
+
+			if pls.initialized {
+				err = pls.initPlugin(p)
+			}
+			return
+		}()
 	}
 	return nil
 }
@@ -164,12 +220,86 @@ func (pls *Plugins) doPlugin(p *Plugin, f func(p *Plugin) (err error)) (err erro
 	return
 }
 
+func (pls *Plugins) After(self, other interface{}) {
+	if pls.afters == nil {
+		pls.afters = map[string][]string{}
+	}
+	var selfUID, otherUID string
+
+	if s, ok := self.(string); ok {
+		selfUID = s
+	} else {
+		selfUID = UID(self)
+	}
+	if s, ok := other.(string); ok {
+		otherUID = s
+	} else {
+		otherUID = UID(other)
+	}
+
+	if _, ok := pls.afters[selfUID]; !ok {
+		pls.afters[selfUID] = []string{otherUID}
+	} else {
+		pls.afters[selfUID] = append(pls.afters[selfUID], otherUID)
+	}
+}
+
+func (pls *Plugins) Before(self, other interface{}) {
+	if pls.befores == nil {
+		pls.befores = map[string][]string{}
+	}
+	var selfUID, otherUID string
+
+	if s, ok := self.(string); ok {
+		selfUID = s
+	} else {
+		selfUID = UID(self)
+	}
+	if s, ok := other.(string); ok {
+		otherUID = s
+	} else {
+		otherUID = UID(other)
+	}
+
+	if _, ok := pls.befores[selfUID]; !ok {
+		pls.befores[selfUID] = []string{otherUID}
+	} else {
+		pls.befores[selfUID] = append(pls.befores[selfUID], otherUID)
+	}
+}
+
 func (pls *Plugins) sort() (err error) {
+	var (
+		graph      = topsort.NewGraph()
+		provider   = map[string]string{}
+		pluginsMap = map[string]*Plugin{}
+		afters     = pls.afters
+		befors     = pls.befores
+		uidOrPanic = func(v interface{}) string {
+			var uid string
+
+			switch vt := v.(type) {
+			case string:
+				uid = vt
+			default:
+				uid = UID(vt)
+			}
+
+			if _, ok := pluginsMap[uid]; !ok {
+				panic(fmt.Errorf("Plugin %q not registered", uid))
+			}
+			return uid
+		}
+	)
 	pls.sorted = true
 	log.Debug("sort")
-	graph := topsort.NewGraph()
-	provider := map[string]string{}
-	pluginsMap := map[string]*Plugin{}
+
+	if afters == nil {
+		afters = map[string][]string{}
+	}
+	if befors == nil {
+		befors = map[string][]string{}
+	}
 
 	for _, p := range pls.plugins {
 		uid := p.UID()
@@ -208,27 +338,39 @@ func (pls *Plugins) sort() (err error) {
 			}
 		}
 
-		if after, ok := p.Value.(PluginAfter); ok {
+		if after, ok := p.Value.(PluginAfterUID); ok {
 			for _, v := range after.After() {
-				graph.AddEdge(p.UID(), v)
+				graph.AddEdge(p.UID(), uidOrPanic(v))
 			}
 		}
 
 		if after, ok := p.Value.(PluginAfterI); ok {
 			for _, v := range after.After() {
-				graph.AddEdge(p.UID(), UID(v))
+				graph.AddEdge(p.UID(), uidOrPanic(v))
 			}
 		}
 
-		if before, ok := p.Value.(PluginBefore); ok {
+		if after, ok := afters[p.UID()]; ok {
+			for _, v := range after {
+				graph.AddEdge(p.UID(), uidOrPanic(v))
+			}
+		}
+
+		if before, ok := p.Value.(PluginBeforeUID); ok {
 			for _, v := range before.Before() {
-				graph.AddEdge(v, p.UID())
+				graph.AddEdge(uidOrPanic(v), p.UID())
 			}
 		}
 
 		if before, ok := p.Value.(PluginBeforeI); ok {
 			for _, v := range before.Before() {
-				graph.AddEdge(UID(v), p.UID())
+				graph.AddEdge(uidOrPanic(v), p.UID())
+			}
+		}
+
+		if before, ok := befors[p.UID()]; ok {
+			for _, v := range before {
+				graph.AddEdge(uidOrPanic(v), p.UID())
 			}
 		}
 	}
@@ -255,11 +397,6 @@ func (pls *Plugins) sort() (err error) {
 	return nil
 }
 
-var (
-	SortedError = errors.New("Sorted")
-	Initialized = errors.New("Initialized")
-)
-
 func (pls *Plugins) Sort() (err error) {
 	if !pls.sorted {
 		return pls.sort()
@@ -279,7 +416,7 @@ func (pls *Plugins) initPlugin(p *Plugin) (err error) {
 		}
 	}
 
-	if l, ok := p.Value.(LoggedInterface); ok {
+	if l, ok := p.Value.(LogSetter); ok {
 		l.SetLog(defaultlogger.NewLogger(p.UID()))
 	}
 

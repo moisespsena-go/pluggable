@@ -52,7 +52,7 @@ type PluginRequireOptions interface {
 	RequireOptions() []string
 }
 
-type PluginBefore interface {
+type PluginBeforeUID interface {
 	Before() []string
 }
 
@@ -60,7 +60,7 @@ type PluginBeforeI interface {
 	Before() []interface{}
 }
 
-type PluginAfter interface {
+type PluginAfterUID interface {
 	After() []string
 }
 
@@ -72,9 +72,13 @@ type NamedPlugin interface {
 	Name() string
 }
 
-type LoggedInterface interface {
-	Log() *logging.Logger
+type LogSetter interface {
 	SetLog(log *logging.Logger)
+}
+
+type LoggedInterface interface {
+	LoggerSetter
+	Log() *logging.Logger
 }
 
 type GlobalOptionsInterface interface {
@@ -88,4 +92,17 @@ type PluginFSNameSpace interface {
 
 type PluginAssetsRootPath interface {
 	AssetsRootPath() string
+}
+
+type PluginSetter interface {
+	SetPlugin(p *Plugin)
+}
+
+type PluginAccess interface {
+	PluginSetter
+	Plugin() *Plugin
+}
+
+type LoggerSetter interface {
+	SetLogger(Log *logging.Logger)
 }
