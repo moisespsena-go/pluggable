@@ -3,7 +3,7 @@ package pluggable
 import (
 	"path"
 
-	"github.com/moisespsena/go-error-wrap"
+	"github.com/moisespsena-go/error-wrap"
 
 	"reflect"
 

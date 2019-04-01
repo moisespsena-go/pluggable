@@ -5,7 +5,7 @@ import (
 	"reflect"
 
 	"github.com/moisespsena/go-edis"
-	"github.com/moisespsena/go-error-wrap"
+	"github.com/moisespsena-go/error-wrap"
 )
 
 type EventDispatcher struct {

@@ -4,7 +4,7 @@ import (
 	"path"
 
 	"github.com/moisespsena/go-assetfs/assetfsapi"
-	"github.com/moisespsena/go-error-wrap"
+	"github.com/moisespsena-go/error-wrap"
 	"github.com/moisespsena-go/path-helpers"
 )
 
