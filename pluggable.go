@@ -6,10 +6,10 @@ import (
 	"sync"
 
 	"github.com/go-errors/errors"
-	"github.com/moisespsena/go-default-logger"
+	"github.com/moisespsena-go/default-logger"
 	"github.com/moisespsena/go-edis"
 	"github.com/moisespsena/go-error-wrap"
-	"github.com/moisespsena/go-path-helpers"
+	"github.com/moisespsena-go/path-helpers"
 	"github.com/moisespsena/go-topsort"
 	"github.com/op/go-logging"
 )

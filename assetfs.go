@@ -8,7 +8,7 @@ import (
 	"reflect"
 
 	"github.com/moisespsena/go-assetfs/assetfsapi"
-	"github.com/moisespsena/go-path-helpers"
+	"github.com/moisespsena-go/path-helpers"
 )
 
 var E_FS = PKG + ".FS"

@@ -1,7 +1,7 @@
 package pluggable
 
 import (
-	"github.com/moisespsena/go-path-helpers"
+	"github.com/moisespsena-go/path-helpers"
 	"github.com/op/go-logging"
 )
 

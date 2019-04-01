@@ -3,7 +3,7 @@ package pluggable
 import (
 	"reflect"
 
-	"github.com/moisespsena/go-path-helpers"
+	"github.com/moisespsena-go/path-helpers"
 )
 
 func UID(v interface{}) string {
