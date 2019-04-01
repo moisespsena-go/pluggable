@@ -126,7 +126,7 @@ func (FSEvent) PathOf(value interface{}) (pth string) {
 		t = t.Elem()
 	}
 	pth = t.PkgPath()
-	pth = path_helpers.ResolveGoSrcPath(pth)
+	_, pth = path_helpers.ResolveGoSrcPath(pth)
 	return
 }
 

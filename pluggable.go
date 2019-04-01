@@ -153,7 +153,7 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 		}
 
 		pth = path_helpers.PkgPathOf(pi)
-		absPath = path_helpers.ResolveGoSrcPath(pth)
+		_, absPath = path_helpers.ResolveGoSrcPath(pth)
 
 		p = &Plugin{
 			Index:          len(pls.plugins),
