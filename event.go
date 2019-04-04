@@ -1,6 +1,6 @@
 package pluggable
 
-import "github.com/moisespsena/go-edis"
+import "github.com/moisespsena-go/edis"
 
 type PluginEventInterface interface {
 	EventInterface

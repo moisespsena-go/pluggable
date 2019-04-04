@@ -7,7 +7,7 @@ import (
 
 	"reflect"
 
-	"github.com/moisespsena/go-assetfs/assetfsapi"
+	"github.com/moisespsena-go/assetfs/assetfsapi"
 	"github.com/moisespsena-go/path-helpers"
 )
 

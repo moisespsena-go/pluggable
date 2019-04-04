@@ -1,7 +1,7 @@
 package pluggable
 
 import (
-	"github.com/moisespsena/go-options"
+	"github.com/moisespsena-go/options"
 )
 
 type Options struct {
