@@ -1,7 +1,7 @@
 package pluggable
 
 import (
-	"github.com/op/go-logging"
+	"github.com/moisespsena-go/logging"
 )
 
 type PluginRegister interface {
@@ -10,10 +10,6 @@ type PluginRegister interface {
 
 type PluginRegisterArg interface {
 	OnRegister(p *Plugin)
-}
-
-type PluginRegisterDisArg interface {
-	OnRegister(dis PluginEventDispatcherInterface)
 }
 
 type PluginRegisterOptionsArg interface {
@@ -32,16 +28,9 @@ type PluginInitOptions interface {
 	Init(options *Options)
 }
 
+
 type PluginInitOptionsE interface {
 	Init(options *Options) error
-}
-
-type PluginInitEDisE interface {
-	Init(dis PluginEventDispatcherInterface) error
-}
-
-type PluginInitEDis interface {
-	Init(plugins PluginEventDispatcherInterface)
 }
 
 type PluginProvideOptions interface {
@@ -73,12 +62,12 @@ type NamedPlugin interface {
 }
 
 type LogSetter interface {
-	SetLog(log *logging.Logger)
+	SetLog(log logging.Logger)
 }
 
 type LoggedInterface interface {
 	LoggerSetter
-	Log() *logging.Logger
+	Log() logging.Logger
 }
 
 type GlobalOptionsInterface interface {
@@ -104,5 +93,13 @@ type PluginAccess interface {
 }
 
 type LoggerSetter interface {
-	SetLogger(Log *logging.Logger)
+	SetLogger(Log logging.Logger)
+}
+
+type OptionProvider interface {
+	ProvidesOptions(options *Options)
+}
+
+type OptionProviderE interface {
+	ProvidesOptions(options *Options) (err error)
 }

@@ -1,6 +1,6 @@
 package pluggable
 
-import "github.com/op/go-logging"
+import "github.com/moisespsena-go/logging"
 
 type GlobalOptions struct {
 	GlobalOptions *Options
@@ -15,14 +15,14 @@ func (b GlobalOptions) GetGlobalOptions() *Options {
 }
 
 type Logged struct {
-	log *logging.Logger
+	log logging.Logger
 }
 
-func (l *Logged) SetLog(log *logging.Logger) {
+func (l *Logged) SetLog(log logging.Logger) {
 	l.log = log
 }
 
-func (l *Logged) Log() *logging.Logger {
+func (l *Logged) Log() logging.Logger {
 	return l.log
 }
 

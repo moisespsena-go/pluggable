@@ -46,7 +46,7 @@ func (p *PluginsFS) PrivateFS() assetfsapi.Interface {
 
 func (p *PluginsFS) PluginPrivateFS(pluginUID string) assetfsapi.Interface {
 	fs := p.PrivateFS()
-	fs = fs.NameSpace(p.ByUID[pluginUID].Path)
+	fs = fs.NameSpace(p.ByUID.Get(pluginUID).Path)
 	return fs
 }
 

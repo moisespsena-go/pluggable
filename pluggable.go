@@ -6,12 +6,12 @@ import (
 	"sync"
 
 	"github.com/go-errors/errors"
-	"github.com/moisespsena-go/default-logger"
+	defaultlogger "github.com/moisespsena-go/default-logger"
 	"github.com/moisespsena-go/edis"
-	"github.com/moisespsena-go/error-wrap"
-	"github.com/moisespsena-go/path-helpers"
-	"github.com/moisespsena-go/topsort"
-	"github.com/op/go-logging"
+	errwrap "github.com/moisespsena-go/error-wrap"
+	path_helpers "github.com/moisespsena-go/path-helpers"
+
+	"github.com/moisespsena-go/logging"
 )
 
 const (
@@ -24,6 +24,34 @@ const (
 
 var eof = errors.New("!eof")
 
+type PluginsMap map[string]*Plugin
+
+func (this *PluginsMap) Add(plugin ...*Plugin) {
+	if *this == nil {
+		*this = map[string]*Plugin{}
+	}
+	for _, p := range plugin {
+		(*this)[p.UID()] = p
+	}
+}
+
+func (this *PluginsMap) Get(uid string) *Plugin {
+	if *this == nil {
+		return nil
+	}
+	return (*this)[uid]
+}
+
+func (this *PluginsMap) Has(uid string) bool {
+	if *this == nil {
+		return false
+	}
+	if _, ok := (*this)[uid]; ok {
+		return true
+	}
+	return false
+}
+
 type Plugin struct {
 	uid                   string
 	Index                 int
@@ -32,7 +60,7 @@ type Plugin struct {
 	Value                 interface{}
 	ReflectedValue        reflect.Value
 	AssetsRoot, NameSpace string
-	logger                *logging.Logger
+	logger                logging.Logger
 	mu                    sync.Mutex
 }
 
@@ -47,12 +75,12 @@ func (p *Plugin) String() string {
 	return p.UID()
 }
 
-func (p *Plugin) Logger() *logging.Logger {
+func (p *Plugin) Logger() logging.Logger {
 	if p.logger == nil {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if p.logger == nil {
-			p.logger = logging.MustGetLogger(p.UID())
+			p.logger = logging.GetOrCreateLogger(p.UID())
 		}
 	}
 	return p.logger
@@ -65,22 +93,26 @@ func (p *Plugin) SetLoggerLevel(level logging.Level) {
 type Plugins struct {
 	Logged
 	PluginEventDispatcher
-	ByUID             map[string]*Plugin
-	Extensions        []Extension
-	initialized       bool
-	Log               *logging.Logger
-	plugins           []*Plugin
-	prioritaryPlugins []*Plugin
-	sorted            bool
-	optionsProvider   map[string]*Plugin
-	befores           map[string][]string
-	afters            map[string][]string
+	ByUID           PluginsMap
+	Extensions      []Extension
+	initialized     bool
+	plugins         []*Plugin
+	sorted          bool
+	optionsProvider map[string]*Plugin
+	befores         map[string][]string
+	afters          map[string][]string
 }
 
 func NewPlugins() *Plugins {
 	p := &Plugins{}
+	p.PluginEventDispatcher.PluginsGetter = func() []*Plugin {
+		return p.plugins
+	}
 	p.SetDispatcher(p)
 	p.SetOptions(NewOptions())
+	if p.log == nil {
+		p.log = log
+	}
 	return p
 }
 
@@ -103,6 +135,9 @@ func (pls *Plugins) Extension(extensions ...Extension) (err error) {
 }
 
 func (pls *Plugins) TriggerPlugins(e edis.EventInterface, plugins ...*Plugin) (err error) {
+	log := logging.WithPrefix(logging.WithPrefix(pls.log, "trigger"), e.Name())
+	log.Debug("start")
+	defer log.Debug("done")
 	if len(plugins) == 0 {
 		if len(pls.plugins) > 0 {
 			return pls.PluginEventDispatcher.TriggerPlugins(e, pls.plugins...)
@@ -123,27 +158,13 @@ func (pls *Plugins) Add(plugin ...interface{}) (err error) {
 	return pls.AddTo(&pls.plugins, plugin...)
 }
 
-func (pls *Plugins) AddPrioritary(plugin ...interface{}) (err error) {
-	if pls.sorted {
-		var items []*Plugin
-		err = pls.AddTo(&items, plugin...)
-		pls.plugins = append(items, pls.plugins...)
-		return err
-	}
-	return pls.AddTo(&pls.prioritaryPlugins, plugin...)
-}
-
 func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 	var (
 		pi                interface{}
 		rvalue            reflect.Value
 		pth, absPath, uid string
 		p                 *Plugin
-		ok                bool
 	)
-	if pls.ByUID == nil {
-		pls.ByUID = make(map[string]*Plugin)
-	}
 
 	for _, pi = range plugin {
 		if piDis, ok := pi.(EventDispatcherInterface); ok {
@@ -164,7 +185,7 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 		}
 
 		uid = p.UID()
-		if _, ok = pls.ByUID[uid]; ok {
+		if pls.ByUID.Has(uid) {
 			log.Warningf("%q Duplicated. Ignored.", uid)
 			continue
 		}
@@ -180,7 +201,7 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 				}
 			}()
 			*to = append(*to, p)
-			pls.ByUID[p.UID()] = p
+			pls.ByUID.Add(p)
 
 			if setter, ok := pi.(PluginSetter); ok {
 				setter.SetPlugin(p)
@@ -195,8 +216,6 @@ func (pls *Plugins) AddTo(to *[]*Plugin, plugin ...interface{}) (err error) {
 				r.OnRegister()
 			case PluginRegisterArg:
 				r.OnRegister(p)
-			case PluginRegisterDisArg:
-				r.OnRegister(pls.PluginDispatcher())
 			case PluginRegisterOptionsArg:
 				r.OnRegister(pls.options)
 			}
@@ -268,67 +287,55 @@ func (pls *Plugins) Before(self, other interface{}) {
 	}
 }
 
-func (pls *Plugins) sort() (err error) {
+func (pls *Plugins) sortProviders() (providers []*Plugin, err error) {
 	var (
-		graph      = topsort.NewGraph()
-		provider   = map[string]string{}
-		pluginsMap = map[string]*Plugin{}
-		afters     = pls.afters
-		befors     = pls.befores
-		uidOrPanic = func(v interface{}) string {
-			var uid string
-
-			switch vt := v.(type) {
-			case string:
-				uid = vt
-			default:
-				uid = UID(vt)
-			}
-
-			if _, ok := pluginsMap[uid]; !ok {
-				panic(fmt.Errorf("Plugin %q not registered", uid))
-			}
-			return uid
-		}
+		provider = map[string]string{}
 	)
-	pls.sorted = true
-	log.Debug("sort")
-
-	if afters == nil {
-		afters = map[string][]string{}
-	}
-	if befors == nil {
-		befors = map[string][]string{}
-	}
-
-	for _, p := range pls.plugins {
-		uid := p.UID()
-		graph.AddNode(uid)
-		pluginsMap[uid] = p
-		if provides, ok := p.Value.(PluginProvideOptions); ok {
-			for _, optionName := range provides.ProvideOptions() {
-				// if have previous provider, order it
-				if prevId, ok := provider[optionName]; ok {
-					graph.AddEdge(uid, prevId)
+	log.Debug("sort for provides")
+	defer log.Debug("sort for provides done")
+	var sorter = &Sorter{
+		PluginsMap: pls.ByUID,
+		Plugins:    Filter(func(p *Plugin) bool { return IsOptionsProvider(p) }, pls.plugins...),
+		Afters:     pls.afters,
+		Befores:    pls.befores,
+		Pre: func(state *SorterState) error {
+			for _, p := range state.Plugins {
+				uid := p.UID()
+				state.Graph.AddNode(uid)
+				state.pluginsMap[uid] = p
+				if provides, ok := p.Value.(PluginProvideOptions); ok {
+					for _, optionName := range provides.ProvideOptions() {
+						// if have previous provider, order it
+						if prevId, ok := provider[optionName]; ok {
+							state.Graph.AddEdge(uid, prevId)
+						}
+						provider[optionName] = uid
+					}
 				}
-				provider[optionName] = uid
 			}
-		}
+			return nil
+		},
+		Post: func(state *SorterState) error {
+			for optionName, uid := range provider {
+				pls.optionsProvider[optionName] = state.pluginsMap[uid]
+			}
+			return nil
+		},
 	}
-
-	globalOptions := pls.options
-
-	for _, p := range pls.plugins {
+	providers, err = sorter.Sort(func(state *SorterState, p *Plugin) (err error) {
 		if requires, ok := p.Value.(PluginRequireOptions); ok {
 			err = pls.doPlugin(p, func(p *Plugin) error {
 				uid := p.UID()
 				for _, optionName := range requires.RequireOptions() {
-					if _, ok := globalOptions.Get(optionName); !ok {
+					if optionName == "" {
+						panic(fmt.Errorf("empty option name from %s (%T)", uid, p.Value))
+					}
+					if _, ok := pls.options.Get(optionName); !ok {
 						providedBy, ok := provider[optionName]
 						if !ok {
 							return fmt.Errorf("Option %q, required by %s, does not have provedor.", optionName, p)
 						}
-						graph.AddEdge(uid, providedBy)
+						state.Graph.AddEdge(uid, providedBy)
 					}
 				}
 				return nil
@@ -337,79 +344,95 @@ func (pls *Plugins) sort() (err error) {
 				return
 			}
 		}
-
-		if after, ok := p.Value.(PluginAfterUID); ok {
-			for _, v := range after.After() {
-				graph.AddEdge(p.UID(), uidOrPanic(v))
-			}
-		}
-
-		if after, ok := p.Value.(PluginAfterI); ok {
-			for _, v := range after.After() {
-				graph.AddEdge(p.UID(), uidOrPanic(v))
-			}
-		}
-
-		if after, ok := afters[p.UID()]; ok {
-			for _, v := range after {
-				graph.AddEdge(p.UID(), uidOrPanic(v))
-			}
-		}
-
-		if before, ok := p.Value.(PluginBeforeUID); ok {
-			for _, v := range before.Before() {
-				graph.AddEdge(uidOrPanic(v), p.UID())
-			}
-		}
-
-		if before, ok := p.Value.(PluginBeforeI); ok {
-			for _, v := range before.Before() {
-				graph.AddEdge(uidOrPanic(v), p.UID())
-			}
-		}
-
-		if before, ok := befors[p.UID()]; ok {
-			for _, v := range before {
-				graph.AddEdge(uidOrPanic(v), p.UID())
-			}
-		}
-	}
-
-	result, err := graph.TopSort()
-	if err != nil {
-		return errwrap.Wrap(err, "Top-Sort")
-	}
-
-	plugins := make([]*Plugin, len(result))
-	for i, uid := range result {
-		plugins[i] = pluginsMap[uid]
-	}
-
-	pls.plugins = append(pls.prioritaryPlugins, plugins...)
-	pls.optionsProvider = make(map[string]*Plugin)
-
-	for optionName, uid := range provider {
-		pls.optionsProvider[optionName] = pluginsMap[uid]
-	}
-
-	log.Debug("sort done")
-
-	return nil
+		return
+	})
+	return
 }
 
-func (pls *Plugins) Sort() (err error) {
-	if !pls.sorted {
-		return pls.sort()
+func (pls *Plugins) ProvideOptions() (err error) {
+	log.Debug("provides")
+	defer log.Debug("provides done")
+	var providers []*Plugin
+	if providers, err = pls.sortProviders(); err != nil {
+		return
 	}
-	return SortedError
+	for _, p := range providers {
+		switch provider := p.Value.(type) {
+		case OptionProvider:
+			provider.ProvidesOptions(pls.options)
+		case OptionProviderE:
+			if err = provider.ProvidesOptions(pls.options); err != nil {
+				return errwrap.Wrap(err, "Plugin {%v} Provides failed", p.String())
+			}
+		}
+	}
+	return
+}
+
+func (pls *Plugins) sortf(state *SorterState, p *Plugin) (err error) {
+	graph, uidOrPanic := state.Graph, state.UidOrPanic
+	if after, ok := p.Value.(PluginAfterUID); ok {
+		for _, v := range after.After() {
+			graph.AddEdge(p.UID(), uidOrPanic(v))
+		}
+	}
+
+	if after, ok := p.Value.(PluginAfterI); ok {
+		for _, v := range after.After() {
+			graph.AddEdge(p.UID(), uidOrPanic(v))
+		}
+	}
+
+	if after, ok := state.Afters[p.UID()]; ok {
+		for _, v := range after {
+			graph.AddEdge(p.UID(), uidOrPanic(v))
+		}
+	}
+
+	if before, ok := p.Value.(PluginBeforeUID); ok {
+		for _, v := range before.Before() {
+			graph.AddEdge(uidOrPanic(v), p.UID())
+		}
+	}
+
+	if before, ok := p.Value.(PluginBeforeI); ok {
+		for _, v := range before.Before() {
+			graph.AddEdge(uidOrPanic(v), p.UID())
+		}
+	}
+
+	if before, ok := state.Befors[p.UID()]; ok {
+		for _, v := range before {
+			graph.AddEdge(uidOrPanic(v), p.UID())
+		}
+	}
+	return
+}
+
+func (pls *Plugins) sortForInit() (sorted []*Plugin, err error) {
+	pls.log.Debug("sort for init")
+	defer log.Debug("sort for init done")
+	var sorter = &Sorter{
+		PluginsMap: pls.ByUID,
+		Plugins: pls.plugins,
+		Afters:  pls.afters,
+		Befores: pls.befores,
+	}
+	sorted, err = sorter.Sort(pls.sortf)
+	return
 }
 
 func (pls *Plugins) initPlugin(p *Plugin) (err error) {
-	log.Debug("init plugin", p.String())
+	log := logging.WithPrefix(logging.WithPrefix(pls.log, "init plugin"), p.String())
+	log.Debug("start")
+	defer log.Debug("done")
 	options := pls.Options()
 
 	if requireOptions, ok := p.Value.(PluginRequireOptions); ok {
 		for _, name := range requireOptions.RequireOptions() {
+			if name == "" {
+				return fmt.Errorf("required option key from %s (%T) is blank", p.uid, p.Value)
+			}
 			if !options.Has(name) {
 				return fmt.Errorf("Required option %q, provided by %s is <nil>", name, pls.optionsProvider[name])
 			}
@@ -417,7 +440,7 @@ func (pls *Plugins) initPlugin(p *Plugin) (err error) {
 	}
 
 	if l, ok := p.Value.(LogSetter); ok {
-		l.SetLog(defaultlogger.NewLogger(p.UID()))
+		l.SetLog(defaultlogger.GetOrCreateLogger(p.UID()))
 	}
 
 	if gOptions, ok := p.Value.(GlobalOptionsInterface); ok {
@@ -433,13 +456,6 @@ func (pls *Plugins) initPlugin(p *Plugin) (err error) {
 		pl.Init()
 	case PluginInitE:
 		err = pl.Init()
-		if err != nil {
-			return errwrap.Wrap(err, "Init")
-		}
-	case PluginInitEDis:
-		pl.Init(pls)
-	case PluginInitEDisE:
-		err = pl.Init(pls)
 		if err != nil {
 			return errwrap.Wrap(err, "Init")
 		}
@@ -465,11 +481,13 @@ func (pls *Plugins) Init() (err error) {
 	}
 	pls.initialized = true
 
-	err = pls.Sort()
-	if err != nil && err != SortedError {
+	var sorted []*Plugin
+
+	if sorted, err = pls.sortForInit(); err != nil {
 		return
 	}
-	err = nil
+
+	pls.plugins = sorted
 
 	log.Debug("init extensions")
 
@@ -489,7 +507,13 @@ func (pls *Plugins) Init() (err error) {
 
 	log.Debug("init plugins")
 
-	err = pls.Each(pls.initPlugin)
+	for _, p := range sorted {
+		if IsInitializador(p) {
+			if err = pls.initPlugin(p); err != nil {
+				return
+			}
+		}
+	}
 
 	log.Debug("init plugins done")
 

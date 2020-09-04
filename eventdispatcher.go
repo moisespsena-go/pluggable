@@ -5,7 +5,8 @@ import (
 	"reflect"
 
 	"github.com/moisespsena-go/edis"
-	"github.com/moisespsena-go/error-wrap"
+	errwrap "github.com/moisespsena-go/error-wrap"
+	"github.com/moisespsena-go/logging"
 )
 
 type EventDispatcher struct {
@@ -40,19 +41,37 @@ type PluginEventDispatcherInterface interface {
 	EachPlugins(items []*Plugin, cb func(plugin *Plugin) (err error)) (err error)
 	EachPluginsCallback(items []*Plugin, callbacks ...func(plugin *Plugin) error) (err error)
 	Options() *Options
+	GetPlugins() []*Plugin
 }
 
 type PluginEventDispatcher struct {
 	EventDispatcher
-	options *Options
+	options       *Options
+	PluginsGetter func() []*Plugin
+}
+
+func (ped *PluginEventDispatcher) GetPlugins() []*Plugin {
+	return ped.PluginsGetter()
 }
 
 func (ped *PluginEventDispatcher) SetOptions(options *Options) {
+	if ped.options != nil {
+		ped.options.Del(PKG + ".dispatcher")
+	}
+
+	options.Set(PKG+".dispatcher", ped.PluginDispatcher())
 	ped.options = options
 }
 
 func (ped *PluginEventDispatcher) Options() *Options {
 	return ped.options
+}
+
+func (ped *PluginEventDispatcher) SetDispatcher(dis EventDispatcherInterface) {
+	ped.EventDispatcher.SetDispatcher(dis)
+	if ped.options != nil {
+		ped.options.Set(PKG+".dispatcher", dis.(PluginEventDispatcherInterface))
+	}
 }
 
 func (ped *PluginEventDispatcher) OnPlugin(eventName string, callbacks ...interface{}) {
@@ -108,17 +127,34 @@ func (ped *PluginEventDispatcher) TriggerPlugins(e EventInterface, plugins ...*P
 
 	eLocal := &PluginEvent{&Event{PName: "plugin:" + e.Name()}, nil, dis.Options(), dis}
 	err = ped.EachPluginsCallback(plugins, func(plugin *Plugin) (err error) {
+		log_ := ped.Logger()
+		if log_ == nil {
+			log_ = log
+		}
+		log_ = logging.WithPrefix(log_, "trigger -> " + e.Name())
+		log_.Debug("start")
+		defer log_.Debug("done")
 		eLocal.plugin = plugin
-		if err = ped.Trigger(eLocal); err == nil {
-			if eLocal.Error() != nil {
-				return eLocal.Error()
+		if err = func()(err error) {
+			log_.Debug("local -> start")
+			defer log_.Debug("local -> done")
+			if err = ped.Trigger(eLocal); err == nil {
+				if eLocal.Error() != nil {
+					return eLocal.Error()
+				}
 			}
+			return
+		}(); err != nil {
+			return
 		}
 		if ed, ok := plugin.Value.(EventDispatcherInterface); ok {
 			pe.SetPlugin(plugin)
 			if err != nil {
 				return
 			}
+			msg := "value -> "+fmt.Sprintf("%T", plugin.Value) + " -> "
+			log_.Debug(msg+"start")
+			defer log_.Debug(msg+"done")
 			if err = ed.Trigger(pe); err == nil {
 				if pe.Error() != nil {
 					return pe.Error()

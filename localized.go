@@ -46,8 +46,8 @@ func InitPluginI18nFS(pls I18nPluginsInterface) {
 	})
 }
 
-func NewI18nPlugins(fs assetfsapi.Interface) *I18nPlugins {
-	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace("@locale")}
+func NewI18nPlugins(fs assetfsapi.Interface, nameSpace string) *I18nPlugins {
+	pls := &I18nPlugins{*NewPluginsFS(fs), fs.NameSpace(nameSpace)}
 	pls.SetDispatcher(pls)
 	InitPluginI18nFS(pls)
 	return pls

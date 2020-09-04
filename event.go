@@ -32,7 +32,6 @@ func NewPluginEvent(e interface{}, data ...interface{}) (pe *PluginEvent) {
 	}
 	for _, d := range data {
 		pe.SetData(d)
-		break
 	}
 	return
 }
